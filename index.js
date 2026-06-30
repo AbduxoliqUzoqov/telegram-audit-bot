@@ -1,0 +1,509 @@
+import 'dotenv/config'
+import express from 'express'
+import mongoose from 'mongoose'
+import User from './models/users.js'
+import Msg from './models/msgs.js'
+
+const app = express()
+app.use(express.json())
+
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/audit_bot'
+mongoose.connect(MONGO_URI)
+  .then(() => console.log('✅ Connected to MongoDB'))
+  .catch(err => console.error('❌ MongoDB connection error:', err))
+
+const SECRET = process.env.WEBHOOK_SECRET
+const PORT = process.env.PORT || 3000
+const admin = process.env.ADMIN_ID
+let logs = [], botUsername=''
+
+async function api(method, params) {
+  const r = await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/${method}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params)
+  })
+  return r.json()
+}
+
+function extractMedia(m) {
+  if (m.photo && m.photo.length > 0) {
+    const photo = m.photo[m.photo.length - 1]; // highest resolution
+    return {
+      type: 'photo',
+      file_id: photo.file_id,
+      file_unique_id: photo.file_unique_id,
+      file_size: photo.file_size
+    };
+  }
+  if (m.video) {
+    return {
+      type: 'video',
+      file_id: m.video.file_id,
+      file_unique_id: m.video.file_unique_id,
+      file_name: m.video.file_name || null,
+      file_size: m.video.file_size || null,
+      mime_type: m.video.mime_type || null
+    };
+  }
+  if (m.document) {
+    return {
+      type: 'document',
+      file_id: m.document.file_id,
+      file_unique_id: m.document.file_unique_id,
+      file_name: m.document.file_name || null,
+      file_size: m.document.file_size || null,
+      mime_type: m.document.mime_type || null
+    };
+  }
+  if (m.voice) {
+    return {
+      type: 'voice',
+      file_id: m.voice.file_id,
+      file_unique_id: m.voice.file_unique_id,
+      file_size: m.voice.file_size || null,
+      mime_type: m.voice.mime_type || null
+    };
+  }
+  if (m.audio) {
+    return {
+      type: 'audio',
+      file_id: m.audio.file_id,
+      file_unique_id: m.audio.file_unique_id,
+      file_name: m.audio.file_name || null,
+      file_size: m.audio.file_size || null,
+      mime_type: m.audio.mime_type || null
+    };
+  }
+  if (m.sticker) {
+    return {
+      type: 'sticker',
+      file_id: m.sticker.file_id,
+      file_unique_id: m.sticker.file_unique_id,
+      file_size: m.sticker.file_size || null
+    };
+  }
+  if (m.animation) {
+    return {
+      type: 'animation',
+      file_id: m.animation.file_id,
+      file_unique_id: m.animation.file_unique_id,
+      file_name: m.animation.file_name || null,
+      file_size: m.animation.file_size || null,
+      mime_type: m.animation.mime_type || null
+    };
+  }
+  if (m.video_note) {
+    return {
+      type: 'video_note',
+      file_id: m.video_note.file_id,
+      file_unique_id: m.video_note.file_unique_id,
+      file_size: m.video_note.file_size || null
+    };
+  }
+}
+
+function formatSender(from) {
+  if (!from) return 'Noma\'lum';
+  const name = [from.first_name, from.last_name].filter(Boolean).join(' ') || 'Noma\'lum';
+  const username = from.username ? ` (@${from.username})` : '';
+  return `<b>${name}</b>${username}`;
+}
+
+function formatChat(chat) {
+  if (!chat) return 'Noma\'lum';
+  const name = [chat.first_name, chat.last_name].filter(Boolean).join(' ') || chat.title || 'Noma\'lum';
+  const username = chat.username ? ` (@${chat.username})` : `(ID: <code>${chat.id}</code>)`;
+  return `<b>${name}</b> ${username}`;
+}
+
+async function sendAuditAlert(ownerChatId, text, media) {
+  try {
+    await api('sendMessage', {
+      chat_id: ownerChatId,
+      text: text,
+      parse_mode: 'HTML'
+    });
+
+    if (media && media.file_id) {
+      let method = '';
+      const params = { chat_id: ownerChatId };
+
+      switch (media.type) {
+        case 'photo':
+          method = 'sendPhoto';
+          params.photo = media.file_id;
+          break;
+        case 'video':
+          method = 'sendVideo';
+          params.video = media.file_id;
+          break;
+        case 'document':
+          method = 'sendDocument';
+          params.document = media.file_id;
+          break;
+        case 'voice':
+          method = 'sendVoice';
+          params.voice = media.file_id;
+          break;
+        case 'audio':
+          method = 'sendAudio';
+          params.audio = media.file_id;
+          break;
+        case 'sticker':
+          method = 'sendSticker';
+          params.sticker = media.file_id;
+          break;
+        case 'animation':
+          method = 'sendAnimation';
+          params.animation = media.file_id;
+          break;
+        case 'video_note':
+          method = 'sendVideoNote';
+          params.video_note = media.file_id;
+          break;
+      }
+
+      if (method) {
+        await api(method, params);
+      }
+    }
+  } catch (err) {
+    console.error('❌ Failed to send audit alert:', err);
+  }
+}
+
+async function loadBotInfo() {
+  const r = await api('getMe', {})
+  if (r.ok) { botUsername = r.result.username; console.log(`✅ Bot: @${botUsername}`) }
+}
+
+// Business (Secretary Mode) business_connection_id 
+
+async function setupCmds() {
+  await api('setMyCommands', {
+    commands: [
+      { command: 'start', description: 'Botni ishga tushirish' },
+      { command: 'yordam', description: 'Yordam' },
+      { command: 'id', description: 'Telegram ID' },
+    ]
+  })
+  await api('setChatMenuButton', {}).catch(() => { })
+}
+
+// ===== EXPRESS =====
+app.get('/', (req, res) => {
+  if (req.query?.set === 'setwebhook') {
+    const allowed = encodeURIComponent(JSON.stringify([
+      'message', 'edited_message',
+      'business_connection', 'business_message',
+      'edited_business_message', 'deleted_business_messages',
+      'callback_query', 'inline_query'
+    ]))
+    return res.send(
+      `<a href="https://api.telegram.org/bot${process.env.BOT_TOKEN}/setWebhook?url=https://${req.get('host')}/webhook&secret_token=${SECRET}&allowed_updates=${allowed}">Set</a><br>` +
+      `<a href="https://api.telegram.org/bot${process.env.BOT_TOKEN}/deleteWebhook">Del</a><br>` +
+      `<a href="https://api.telegram.org/bot${process.env.BOT_TOKEN}/getWebhookInfo">Info</a>`
+    )
+  }
+  res.send('Bot ishlayapti ✅')
+})
+
+app.get('/logs', (req, res) => {
+  if (SECRET && req.query.secret !== SECRET) return res.sendStatus(403)
+  res.json(logs)
+})
+
+app.post('/webhook', async (req, res) => {
+  if (SECRET && req.headers['x-telegram-bot-api-secret-token'] !== SECRET) return res.sendStatus(403)
+  try {
+    const b = req.body; logs.unshift(b); logs = logs.slice(0, 12)
+
+    if (b.message) await handleMessage(b.message)
+    if (b.callback_query) await handleCallback(b.callback_query)
+    if (b.inline_query) await handleInline(b.inline_query)
+
+    // --- Secretary Mode (Chat Automation) update'lari ---
+    if (b.business_connection) await handleBusinessConnection(b.business_connection)
+    if (b.business_message) await handleBusinessMessage(b.business_message)
+    if (b.edited_business_message) await handleEditedBusinessMessage(b.edited_business_message)
+    if (b.deleted_business_messages) await handleDeletedBusinessMessages(b.deleted_business_messages)
+    
+
+  } catch (e) { console.error('❌', e) }
+  res.sendStatus(200)
+})
+
+// ===== ODDIY MESSAGE (botga to'g'ridan-to'g'ri yozilgan) =====
+async function handleMessage(m) {
+  let user = await User.findOne({ userId: m.chat.id })
+  if (!user) {
+    user = new User({ userId: m.chat.id, firstName: m.chat.first_name, lastName: m.chat.last_name, username: m.chat.username })
+    await user.save()
+  }else{
+    user.firstName = m.chat.first_name || user.firstName
+    user.lastName = m.chat.last_name || user.lastName
+    user.username = m.chat.username || user.username
+    await user.save()
+  }
+  if (m.text === '/start') {
+    const welcomeText = 
+      `👋 <b>Assalomu alaykum, ${user.firstName}!</b>\n\n` +
+      `🤖 Ushbu bot sizga o'tish yozishmalaringizni (Telegram Business Connection orqali) nazorat qilish va xavfsizligini ta'minlashda yordam beradi.\n\n` +
+      `<b>Asosiy imkoniyatlar:</b>\n` +
+      `• 📝 Xabarlar tarixini vaqtinchalik saqlash (48 soatgacha)\n` +
+      `• ✏️ Xabar tahrirlansa (edit) eski va yangi matnni solishtirib yuborish\n` +
+      `• 🗑 Xabar o'chirilsa (delete) uning asl matni va media fayllarini qaytarib jo'natish\n\n` +
+      `⚙️ <i>Ulanish uchun: Telegram Sozlamalari ➜ Telegram Business ➜ Chat Bots bo'limidan ushbu botni tanlang.</i>`
+
+    await api('sendMessage', { 
+      chat_id: m.chat.id,
+      text: welcomeText,
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: 'Admin blog', web_app: { url: 'https://abduxoliq.alwaysdata.net' } }]
+        ]
+      }
+    })
+  }
+
+}
+
+async function handleCallback(cq) {
+  console.log('callback_query:', cq.data)
+}
+
+async function handleInline(iq) {
+  console.log('inline_query:', iq.query)
+}
+
+// ===== SECRETARY MODE: ulanish hodisasi =====
+async function handleBusinessConnection(bc) {
+  console.log(`🔗 Business connection: id=${bc.id}, user_chat_id=${bc.user_chat_id}, is_enabled=${bc.is_enabled}`)
+  try {
+    let user = await User.findOne({ userId: bc.user.id })
+    if (!user) {
+      user = new User({
+        userId: bc.user.id,
+        firstName: bc.user.first_name || '',
+        lastName: bc.user.last_name || '',
+        username: bc.user.username || '',
+        businessConnectionId: bc.id,
+        is_enabled: bc.is_enabled
+      })
+    } else {
+      user.firstName = bc.user.first_name || user.firstName
+      user.lastName = bc.user.last_name || user.lastName
+      user.username = bc.user.username || user.username
+      user.businessConnectionId = bc.id
+      user.is_enabled = bc.is_enabled
+    }
+    await user.save()
+    console.log(`💾 User connection status saved: userId=${user.userId}, is_enabled=${user.is_enabled}`)
+
+    // Foydalanuvchiga ulanish holati haqida xabar berish
+    const connectionStatusText = bc.is_enabled 
+      ? `🔔 <b>Telegram Business ulandi!</b>\n\nProfilingiz botga muvaffaqiyatli bog'landi. Endi shaxsiy yozishmalaringiz nazorati (audit) boshlandi.`
+      : `🔕 <b>Telegram Business uzildi!</b>\n\nProfilingiz botdan uzildi. Yozishmalarni nazorat qilish to'xtatildi.`
+
+    await api('sendMessage', {
+      chat_id: bc.user.id,
+      text: connectionStatusText,
+      parse_mode: 'HTML'
+    }).catch(err => console.error('❌ Error sending connection status to user:', err))
+  } catch (err) {
+    console.error('❌ Error handling business connection:', err)
+  }
+}
+
+// ===== SECRETARY MODE: yangi xabar =====
+async function handleBusinessMessage(m) {
+  try {
+    const media = extractMedia(m)
+    
+    let text = m.text || ''
+    if (!text && !m.caption) {
+      if (m.location) text = '📍 [Lokatsiya/Joylashuv]'
+      else if (m.contact) text = '👤 [Kontakt]'
+      else if (m.poll) text = '📊 [So\'rovnoma]'
+      else if (m.venue) text = '🏢 [Joy/Venue]'
+      else if (m.game) text = '🎮 [O\'yin]'
+      else if (m.dice) text = `🎲 [Dice: ${m.dice.value}]`
+    }
+
+    const msgData = {
+      businessConnectionId: m.business_connection_id,
+      chatId: m.chat.id,
+      messageId: m.message_id,
+      from: {
+        id: m.from.id,
+        first_name: m.from.first_name || '',
+        last_name: m.from.last_name || '',
+        username: m.from.username || ''
+      },
+      text: text,
+      caption: m.caption || '',
+      media: media || {
+        type: null,
+        file_id: null,
+        file_unique_id: null,
+        file_name: null,
+        file_size: null,
+        mime_type: null
+      },
+      date: m.date
+    }
+
+    await Msg.findOneAndUpdate(
+      { businessConnectionId: m.business_connection_id, chatId: m.chat.id, messageId: m.message_id },
+      msgData,
+      { upsert: true, new: true }
+    )
+    console.log(`💾 Saved message: ID=${m.message_id} in Chat=${m.chat.id}`)
+  } catch (err) {
+    console.error('❌ Error saving business message:', err)
+  }
+}
+
+//  ===== SECRETARY MODE: xabar tahrirlandi =====
+async function handleEditedBusinessMessage(m) {
+  try {
+    const oldMsg = await Msg.findOne({
+      businessConnectionId: m.business_connection_id,
+      chatId: m.chat.id,
+      messageId: m.message_id
+    })
+
+    const owner = await User.findOne({ businessConnectionId: m.business_connection_id })
+
+    const newMedia = extractMedia(m)
+    let newText = m.text || ''
+    if (!newText && !m.caption) {
+      if (m.location) newText = '📍 [Lokatsiya/Joylashuv]'
+      else if (m.contact) newText = '👤 [Kontakt]'
+      else if (m.poll) newText = '📊 [So\'rovnoma]'
+      else if (m.venue) newText = '🏢 [Joy/Venue]'
+      else if (m.game) newText = '🎮 [O\'yin]'
+      else if (m.dice) newText = `🎲 [Dice: ${m.dice.value}]`
+    }
+
+    if (oldMsg && owner) {
+      const isTextDiff = oldMsg.text !== newText
+      const isCaptionDiff = oldMsg.caption !== (m.caption || '')
+      const isMediaDiff = (oldMsg.media?.file_id || null) !== (newMedia?.file_id || null)
+
+      if (isTextDiff || isCaptionDiff || isMediaDiff) {
+        const formattedTime = new Date().toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        
+        let reportText = `✏️ <b>AUDIT: XABAR TAHRIRLANDI</b>\n`
+        reportText += `───────────────────\n`
+        reportText += `👤 <b>Yuborgan:</b> ${formatSender(oldMsg.from)}\n`
+        reportText += `💬 <b>Chat:</b> ${formatChat(m.chat)}\n`
+        reportText += `───────────────────\n\n`
+        
+        if (isTextDiff) {
+          reportText += `❌ <b>ESKI MATN:</b>\n`
+          reportText += `<blockquote>${oldMsg.text || '[Bo\'sh]'}</blockquote>\n`
+          reportText += `✅ <b>YANGI MATN:</b>\n`
+          reportText += `<blockquote>${newText || '[Bo\'sh]'}</blockquote>\n\n`
+        }
+        
+        if (isCaptionDiff) {
+          reportText += `❌ <b>ESKI IZOH (Caption):</b>\n`
+          reportText += `<blockquote>${oldMsg.caption || '[Bo\'sh]'}</blockquote>\n`
+          reportText += `✅ <b>YANGI IZOH (Caption):</b>\n`
+          reportText += `<blockquote>${m.caption || '[Bo\'sh]'}</blockquote>\n\n`
+        }
+
+        if (isMediaDiff) {
+          reportText += `⚠️ <b>MEDIA O'ZGARTIRILDI:</b>\n`
+          reportText += `• Eski media turi: <code>${oldMsg.media?.type || 'yo\'q'}</code>\n`
+          reportText += `• Yangi media turi: <code>${newMedia?.type || 'yo\'q'}</code>\n\n`
+        }
+
+        reportText += `<i>🕒 Tahrirlangan vaqt: ${formattedTime}</i>`
+
+        // Send comparative notification and the original media to the owner
+        await sendAuditAlert(owner.userId, reportText, oldMsg.media)
+      }
+    }
+
+    // Update stored message with the new state
+    const updatedData = {
+      text: newText,
+      caption: m.caption || '',
+      media: newMedia || {
+        type: null,
+        file_id: null,
+        file_unique_id: null,
+        file_name: null,
+        file_size: null,
+        mime_type: null
+      },
+      date: m.date
+    }
+
+    await Msg.findOneAndUpdate(
+      { businessConnectionId: m.business_connection_id, chatId: m.chat.id, messageId: m.message_id },
+      { $set: updatedData },
+      { upsert: true }
+    )
+    console.log(`💾 Updated edited message ID=${m.message_id} in Chat=${m.chat.id}`)
+  } catch (err) {
+    console.error('❌ Error handling edited business message:', err)
+  }
+}
+
+// ===== SECRETARY MODE: xabar(lar) o'chirildi =====
+async function handleDeletedBusinessMessages(event) {
+  try {
+    const owner = await User.findOne({ businessConnectionId: event.business_connection_id })
+    if (!owner) return
+
+    const chatName = event.chat.first_name || event.chat.title || 'Noma\'lum'
+
+    for (const msgId of event.message_ids) {
+      const oldMsg = await Msg.findOne({
+        businessConnectionId: event.business_connection_id,
+        chatId: event.chat.id,
+        messageId: msgId
+      })
+
+      if (oldMsg) {
+        const contentText = oldMsg.text || oldMsg.caption || ''
+        const formattedTime = new Date().toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        
+        let reportText = `🗑 <b>AUDIT: XABAR O'CHIRILDI</b>\n`
+        reportText += `───────────────────\n`
+        reportText += `👤 <b>Yuborgan:</b> ${formatSender(oldMsg.from)}\n`
+        reportText += `💬 <b>Chat:</b> ${formatChat(event.chat)}\n`
+        reportText += `───────────────────\n\n`
+        
+        if (contentText) {
+          reportText += `📝 <b>O'CHIRILGAN MAZMUN:</b>\n`
+          reportText += `<blockquote>${contentText}</blockquote>\n`
+        }
+        
+        if (oldMsg.media?.type) {
+          reportText += `📁 <b>Media turi:</b> <code>${oldMsg.media.type}</code>\n`
+        }
+
+        reportText += `\n<i>🕒 O'chirilgan vaqt: ${formattedTime}</i>`
+
+        // Send alert along with deleted media
+        await sendAuditAlert(owner.userId, reportText, oldMsg.media)
+
+        // Delete from DB
+        await Msg.deleteOne({ _id: oldMsg._id })
+        console.log(`🗑 Deleted message ID=${msgId} from database`)
+      }
+    }
+  } catch (err) {
+    console.error('❌ Error handling deleted business messages:', err)
+  }
+}
+
+// ===== START =====
+app.listen(PORT, async () => {
+  await loadBotInfo(); await setupCmds()
+  console.log(`✅ Server port ${PORT}`)
+})
