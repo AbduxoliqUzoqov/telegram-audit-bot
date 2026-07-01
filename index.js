@@ -8,9 +8,24 @@ const app = express()
 app.use(express.json())
 
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/audit_bot'
-mongoose.connect(MONGO_URI)
-  .then(() => console.log('✅ Connected to MongoDB'))
-  .catch(err => console.error('❌ MongoDB connection error:', err))
+let isConnected = false
+async function connectDb() {
+  if (isConnected) return
+  if (mongoose.connection.readyState === 1) {
+    isConnected = true
+    return
+  }
+  try {
+    await mongoose.connect(MONGO_URI, {
+      serverSelectionTimeoutMS: 5000,
+    })
+    isConnected = true
+    console.log('✅ Connected to MongoDB')
+  } catch (err) {
+    console.error('❌ MongoDB connection error:', err)
+    throw err
+  }
+}
 
 const SECRET = process.env.WEBHOOK_SECRET
 const PORT = process.env.PORT || 3000
@@ -306,6 +321,7 @@ app.get('/logs', (req, res) => {
 app.post('/webhook', async (req, res) => {
   if (SECRET && req.headers['x-telegram-bot-api-secret-token'] !== SECRET) return res.sendStatus(403)
   try {
+    await connectDb()
     const b = req.body; logs.unshift(b); logs = logs.slice(0, 12)
 
     if (b.message) await handleMessage(b.message)
@@ -342,8 +358,8 @@ async function handleMessage(m) {
       `🚀 <b>Asosiy imkoniyatlar:</b>\n` +
       `• ✏️ <b>Tahrirlangan xabarlar:</b> Xabar o'zgartirilsa, eski va yangi holatini solishtirib beradi.\n` +
       `• 🗑 <b>O'chirilgan xabarlar:</b> Xabar o'chirib tashlansa, uning asl nusxasini tiklab yuboradi.\n` +
-      `• ⏱ <b>Bir martalik / Taymerli xabarlar:</b> Agar suhbatdoshingiz sizga bir martalik ko'rishga mo'ljallangan rasm, video, audio yoki video-kruglyak yuborsa, bot uni to'g'ridan-to'g'ri ko'ra olmaydi. Buni saqlab qolish uchun <b>o'sha xabarga reply (javob) qilib yozib qo'ysangiz kifoya</b>, bot uni yuklab olib sizga tashlab beradi!\n\n` +
-      `⚙️ <i>Ulanish uchun: Telegram Sozlamalari ➜ Telegram Business ➜ Chat Bots bo'limidan ushbu botni tanlang. Batafsil ma'lumot uchun /yordam buyrug'ini bosing.</i>`
+      `• ⏱ <b>Bir martalik / Taymerli xabarlar:</b> Agar suhbatdoshingiz sizga bir martalik rasm, video, ovozli xabar yoki kruglyak yuborsa, uni saqlab qolish uchun <b>o'sha xabarga reply (javob) qilib biror narsa yozib qo'ying</b>. Bot uni sizga darhol yuklab beradi!\n\n` +
+      `⚙️ <i>Ulanish uchun: Mening profilim (My Profile) ➜ Chatlarni avtomatlashtirish (Chat Automation) bo'limidan ushbu botni tanlang. Batafsil ma'lumot uchun /yordam buyrug'ini bosing.</i>`
 
     await api('sendMessage', {
       chat_id: m.chat.id,
@@ -360,14 +376,12 @@ async function handleMessage(m) {
       `📖 <b>Botdan foydalanish yo'riqnomasi:</b>\n\n` +
       `1️⃣ <b>Ulanish:</b>\n` +
       `Botni shaxsiy yozishmalaringizga ulash uchun:\n` +
-      `• Telegram Sozlamalari (Settings) ➜ Telegram Business ➜ Chat Bots (Chat-botlar) bo'limiga kiring.\n` +
+      `• Sozlamalar (Settings) ➜ Mening profilim (My Profile) ➜ Chatlarni avtomatlashtirish (Chat Automation) bo'limiga kiring.\n` +
       `• Ushbu botni (<code>@${botUsername || 'shaxsiyauditbot'}</code>) tanlang va saqlang.\n\n` +
       `2️⃣ <b>Audit (Nazorat):</b>\n` +
       `• Bot ulanganidan so'ng, shaxsiy suhbatlaringizdagi xabarlar tahrirlansa yoki o'chirilsa, bot sizning ushbu shaxsiy chatingizga audit xabarlarini yuboradi.\n\n` +
-      `3️⃣ <b>⏱ Bir martalik (o'chib ketadigan) media fayllar:</b>\n` +
-      `• Telegram bunday xabarlarni to'g'ridan-to'g'ri botga uzatmaydi.\n` +
-      `• Ularni saqlab qolish uchun, suhbatdosh yuborgan bir martalik rasm, video, audio yoki video note (kruglyak) xabariga <b>reply (javob)</b> qilib biror nima yozib qo'ying.\n` +
-      `• Javob yozganingizda, bot orqa fonda o'sha mediani xavfsiz tarzda yuklab oladi va sizga alohida jo'natadi!`;
+      `3️⃣ <b>⏱ Bir martalik (o'chib ketadigan) xabarlar:</b>\n` +
+      `• Kelgan taymerli rasm, video, ovoz yoki kruglyakni saqlab qolish uchun <b>o'sha xabarga reply (javob) qilib yozib qo'ying</b>. Bot uni sizga darhol yuklab beradi!`;
 
     await api('sendMessage', {
       chat_id: m.chat.id,
@@ -773,7 +787,12 @@ async function loadConnectionCache() {
 
 // ===== START =====
 app.listen(PORT, async () => {
-  await loadBotInfo(); await setupCmds(); await loadConnectionCache()
+  try {
+    await connectDb()
+    await loadBotInfo(); await setupCmds(); await loadConnectionCache()
+  } catch (err) {
+    console.error('❌ Startup error:', err)
+  }
   console.log(`✅ Server port ${PORT}`)
 })
 
