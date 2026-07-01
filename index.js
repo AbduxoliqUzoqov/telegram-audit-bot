@@ -15,6 +15,7 @@ mongoose.connect(MONGO_URI)
 const SECRET = process.env.WEBHOOK_SECRET
 const PORT = process.env.PORT || 3000
 const admin = process.env.ADMIN_ID
+const connectionOwners = new Map()
 let logs = [], botUsername=''
 
 async function api(method, params) {
@@ -281,6 +282,8 @@ async function handleBusinessConnection(bc) {
   console.log(`🔗 Business connection: id=${bc.id}, user_chat_id=${bc.user_chat_id}, is_enabled=${bc.is_enabled}`)
   try {
     let user = await User.findOne({ userId: bc.user.id })
+    const oldBcId = user ? user.businessConnectionId : null
+
     if (!user) {
       user = new User({
         userId: bc.user.id,
@@ -300,6 +303,16 @@ async function handleBusinessConnection(bc) {
     await user.save()
     console.log(`💾 User connection status saved: userId=${user.userId}, is_enabled=${user.is_enabled}`)
 
+    // Update RAM Cache
+    if (bc.is_enabled) {
+      if (oldBcId && oldBcId !== bc.id) {
+        connectionOwners.delete(oldBcId)
+      }
+      connectionOwners.set(bc.id, bc.user.id)
+    } else {
+      connectionOwners.delete(bc.id)
+    }
+
     // Foydalanuvchiga ulanish holati haqida xabar berish
     const connectionStatusText = bc.is_enabled 
       ? `🔔 <b>Telegram Business ulandi!</b>\n\nProfilingiz botga muvaffaqiyatli bog'landi. Endi shaxsiy yozishmalaringiz nazorati (audit) boshlandi.`
@@ -318,8 +331,21 @@ async function handleBusinessConnection(bc) {
 // ===== SECRETARY MODE: yangi xabar =====
 async function handleBusinessMessage(m) {
   try {
+    let ownerId = connectionOwners.get(m.business_connection_id)
+    if (!ownerId) {
+      const owner = await User.findOne({ businessConnectionId: m.business_connection_id })
+      if (owner) {
+        ownerId = owner.userId
+        connectionOwners.set(m.business_connection_id, ownerId)
+      }
+    }
+
+    if (!ownerId) {
+      console.warn(`⚠️ Owner not found for connection ID: ${m.business_connection_id}`)
+      return
+    }
+
     const media = extractMedia(m)
-    
     let text = m.text || ''
     if (!text && !m.caption) {
       if (m.location) text = '📍 [Lokatsiya/Joylashuv]'
@@ -330,9 +356,14 @@ async function handleBusinessMessage(m) {
       else if (m.dice) text = `🎲 [Dice: ${m.dice.value}]`
     }
 
+    const chatName = [m.chat.first_name, m.chat.last_name].filter(Boolean).join(' ') || m.chat.title || 'Noma\'lum'
+    const isOutgoing = (m.chat.id !== m.from.id)
+
     const msgData = {
-      businessConnectionId: m.business_connection_id,
+      ownerId: ownerId,
       chatId: m.chat.id,
+      chatName: chatName,
+      isOutgoing: isOutgoing,
       messageId: m.message_id,
       from: {
         id: m.from.id,
@@ -354,11 +385,11 @@ async function handleBusinessMessage(m) {
     }
 
     await Msg.findOneAndUpdate(
-      { businessConnectionId: m.business_connection_id, chatId: m.chat.id, messageId: m.message_id },
+      { ownerId: ownerId, chatId: m.chat.id, messageId: m.message_id },
       msgData,
       { upsert: true, new: true }
     )
-    console.log(`💾 Saved message: ID=${m.message_id} in Chat=${m.chat.id}`)
+    console.log(`💾 Saved message: ID=${m.message_id} in Chat=${m.chat.id} (Owner=${ownerId}, Outgoing=${isOutgoing})`)
   } catch (err) {
     console.error('❌ Error saving business message:', err)
   }
@@ -367,13 +398,25 @@ async function handleBusinessMessage(m) {
 //  ===== SECRETARY MODE: xabar tahrirlandi =====
 async function handleEditedBusinessMessage(m) {
   try {
+    let ownerId = connectionOwners.get(m.business_connection_id)
+    if (!ownerId) {
+      const owner = await User.findOne({ businessConnectionId: m.business_connection_id })
+      if (owner) {
+        ownerId = owner.userId
+        connectionOwners.set(m.business_connection_id, ownerId)
+      }
+    }
+
+    if (!ownerId) {
+      console.warn(`⚠️ Owner not found for connection ID: ${m.business_connection_id}`)
+      return
+    }
+
     const oldMsg = await Msg.findOne({
-      businessConnectionId: m.business_connection_id,
+      ownerId: ownerId,
       chatId: m.chat.id,
       messageId: m.message_id
     })
-
-    const owner = await User.findOne({ businessConnectionId: m.business_connection_id })
 
     const newMedia = extractMedia(m)
     let newText = m.text || ''
@@ -386,7 +429,7 @@ async function handleEditedBusinessMessage(m) {
       else if (m.dice) newText = `🎲 [Dice: ${m.dice.value}]`
     }
 
-    if (oldMsg && owner) {
+    if (oldMsg) {
       const isTextDiff = oldMsg.text !== newText
       const isCaptionDiff = oldMsg.caption !== (m.caption || '')
       const isMediaDiff = (oldMsg.media?.file_id || null) !== (newMedia?.file_id || null)
@@ -423,12 +466,18 @@ async function handleEditedBusinessMessage(m) {
         reportText += `<i>🕒 Tahrirlangan vaqt: ${formattedTime}</i>`
 
         // Send comparative notification and the original media to the owner
-        await sendAuditAlert(owner.userId, reportText, oldMsg.media)
+        await sendAuditAlert(ownerId, reportText, oldMsg.media)
       }
     }
 
+    const chatName = [m.chat.first_name, m.chat.last_name].filter(Boolean).join(' ') || m.chat.title || 'Noma\'lum'
+    const isOutgoing = (m.chat.id !== m.from.id)
+
     // Update stored message with the new state
     const updatedData = {
+      ownerId: ownerId,
+      chatName: chatName,
+      isOutgoing: isOutgoing,
       text: newText,
       caption: m.caption || '',
       media: newMedia || {
@@ -443,7 +492,7 @@ async function handleEditedBusinessMessage(m) {
     }
 
     await Msg.findOneAndUpdate(
-      { businessConnectionId: m.business_connection_id, chatId: m.chat.id, messageId: m.message_id },
+      { ownerId: ownerId, chatId: m.chat.id, messageId: m.message_id },
       { $set: updatedData },
       { upsert: true }
     )
@@ -456,14 +505,23 @@ async function handleEditedBusinessMessage(m) {
 // ===== SECRETARY MODE: xabar(lar) o'chirildi =====
 async function handleDeletedBusinessMessages(event) {
   try {
-    const owner = await User.findOne({ businessConnectionId: event.business_connection_id })
-    if (!owner) return
+    let ownerId = connectionOwners.get(event.business_connection_id)
+    if (!ownerId) {
+      const owner = await User.findOne({ businessConnectionId: event.business_connection_id })
+      if (owner) {
+        ownerId = owner.userId
+        connectionOwners.set(event.business_connection_id, ownerId)
+      }
+    }
 
-    const chatName = event.chat.first_name || event.chat.title || 'Noma\'lum'
+    if (!ownerId) {
+      console.warn(`⚠️ Owner not found for connection ID: ${event.business_connection_id}`)
+      return
+    }
 
     for (const msgId of event.message_ids) {
       const oldMsg = await Msg.findOne({
-        businessConnectionId: event.business_connection_id,
+        ownerId: ownerId,
         chatId: event.chat.id,
         messageId: msgId
       })
@@ -490,7 +548,7 @@ async function handleDeletedBusinessMessages(event) {
         reportText += `\n<i>🕒 O'chirilgan vaqt: ${formattedTime}</i>`
 
         // Send alert along with deleted media
-        await sendAuditAlert(owner.userId, reportText, oldMsg.media)
+        await sendAuditAlert(ownerId, reportText, oldMsg.media)
 
         // Delete from DB
         await Msg.deleteOne({ _id: oldMsg._id })
@@ -502,8 +560,23 @@ async function handleDeletedBusinessMessages(event) {
   }
 }
 
+// Cache loading helper
+async function loadConnectionCache() {
+  try {
+    const users = await User.find({ is_enabled: true })
+    for (const u of users) {
+      if (u.businessConnectionId) {
+        connectionOwners.set(u.businessConnectionId, u.userId)
+      }
+    }
+    console.log(`⚡️ Cached ${connectionOwners.size} active business connections`)
+  } catch (err) {
+    console.error('❌ Error loading connection cache:', err)
+  }
+}
+
 // ===== START =====
 app.listen(PORT, async () => {
-  await loadBotInfo(); await setupCmds()
+  await loadBotInfo(); await setupCmds(); await loadConnectionCache()
   console.log(`✅ Server port ${PORT}`)
 })
