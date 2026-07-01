@@ -359,7 +359,7 @@ async function handleMessage(m) {
       `• ✏️ <b>Tahrirlangan xabarlar:</b> Xabar o'zgartirilsa, eski va yangi holatini solishtirib beradi.\n` +
       `• 🗑 <b>O'chirilgan xabarlar:</b> Xabar o'chirib tashlansa, uning asl nusxasini tiklab yuboradi.\n` +
       `• ⏱ <b>Bir martalik / Taymerli xabarlar:</b> Agar suhbatdoshingiz sizga bir martalik rasm, video, ovozli xabar yoki kruglyak yuborsa, uni saqlab qolish uchun <b>o'sha xabarga reply (javob) qilib biror narsa yozib qo'ying</b>. Bot uni sizga darhol yuklab beradi!\n\n` +
-      `⚙️ <i>Ulanish uchun: Mening profilim (My Profile) ➜ Chatlarni avtomatlashtirish (Chat Automation) bo'limidan ushbu botni tanlang. Batafsil ma'lumot uchun /yordam buyrug'ini bosing.</i>`
+      `⚙️ <i>Ulanish uchun: Mening profilim <b>(My Profile)</b> ➜ Chatlarni avtomatlashtirish <b>(Chat Automation)</b> bo'limidan ushbu botni tanlang. Batafsil ma'lumot uchun /yordam buyrug'ini bosing.</i>`
 
     await api('sendMessage', {
       chat_id: m.chat.id,
@@ -367,7 +367,8 @@ async function handleMessage(m) {
       parse_mode: 'HTML',
       reply_markup: {
         inline_keyboard: [
-          [{ text: 'Admin blog', web_app: { url: 'https://abduxoliq.alwaysdata.net' } }]
+          [{ text: '🔗 Botni ulash', style: 'success', url: 'tg://settings/edit_profile' }],
+          [{ text: '🧑‍💻Admin blog', style: 'primary', url: 'https://abduxoliq.alwaysdata.net' }]
         ]
       }
     })
