@@ -16,7 +16,7 @@ const SECRET = process.env.WEBHOOK_SECRET
 const PORT = process.env.PORT || 3000
 const admin = process.env.ADMIN_ID
 const connectionOwners = new Map()
-let logs = [], botUsername=''
+let logs = [], botUsername = ''
 
 async function api(method, params) {
   const r = await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/${method}`, {
@@ -118,12 +118,6 @@ function formatChat(chat) {
 
 async function sendAuditAlert(ownerChatId, text, media) {
   try {
-    await api('sendMessage', {
-      chat_id: ownerChatId,
-      text: text,
-      parse_mode: 'HTML'
-    });
-
     if (media && media.file_id) {
       let method = '';
       const params = { chat_id: ownerChatId };
@@ -164,8 +158,18 @@ async function sendAuditAlert(ownerChatId, text, media) {
       }
 
       if (method) {
-        await api(method, params);
+        await api(method, {
+          ...params,
+          caption: text,
+          parse_mode: 'HTML'
+        });
       }
+    } else {
+      await api('sendMessage', {
+        chat_id: ownerChatId,
+        text: text,
+        parse_mode: 'HTML'
+      });
     }
   } catch (err) {
     console.error('❌ Failed to send audit alert:', err);
@@ -227,7 +231,7 @@ app.post('/webhook', async (req, res) => {
     if (b.business_message) await handleBusinessMessage(b.business_message)
     if (b.edited_business_message) await handleEditedBusinessMessage(b.edited_business_message)
     if (b.deleted_business_messages) await handleDeletedBusinessMessages(b.deleted_business_messages)
-    
+
 
   } catch (e) { console.error('❌', e) }
   res.sendStatus(200)
@@ -239,14 +243,14 @@ async function handleMessage(m) {
   if (!user) {
     user = new User({ userId: m.chat.id, firstName: m.chat.first_name, lastName: m.chat.last_name, username: m.chat.username })
     await user.save()
-  }else{
+  } else {
     user.firstName = m.chat.first_name || user.firstName
     user.lastName = m.chat.last_name || user.lastName
     user.username = m.chat.username || user.username
     await user.save()
   }
   if (m.text === '/start') {
-    const welcomeText = 
+    const welcomeText =
       `👋 <b>Assalomu alaykum, ${user.firstName}!</b>\n\n` +
       `🤖 Ushbu bot sizga o'tish yozishmalaringizni (Telegram Business Connection orqali) nazorat qilish va xavfsizligini ta'minlashda yordam beradi.\n\n` +
       `<b>Asosiy imkoniyatlar:</b>\n` +
@@ -255,7 +259,7 @@ async function handleMessage(m) {
       `• 🗑 Xabar o'chirilsa (delete) uning asl matni va media fayllarini qaytarib jo'natish\n\n` +
       `⚙️ <i>Ulanish uchun: Telegram Sozlamalari ➜ Telegram Business ➜ Chat Bots bo'limidan ushbu botni tanlang.</i>`
 
-    await api('sendMessage', { 
+    await api('sendMessage', {
       chat_id: m.chat.id,
       text: welcomeText,
       parse_mode: 'HTML',
@@ -314,7 +318,7 @@ async function handleBusinessConnection(bc) {
     }
 
     // Foydalanuvchiga ulanish holati haqida xabar berish
-    const connectionStatusText = bc.is_enabled 
+    const connectionStatusText = bc.is_enabled
       ? `🔔 <b>Telegram Business ulandi!</b>\n\nProfilingiz botga muvaffaqiyatli bog'landi. Endi shaxsiy yozishmalaringiz nazorati (audit) boshlandi.`
       : `🔕 <b>Telegram Business uzildi!</b>\n\nProfilingiz botdan uzildi. Yozishmalarni nazorat qilish to'xtatildi.`
 
@@ -436,20 +440,20 @@ async function handleEditedBusinessMessage(m) {
 
       if (isTextDiff || isCaptionDiff || isMediaDiff) {
         const formattedTime = new Date().toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-        
+
         let reportText = `✏️ <b>AUDIT: XABAR TAHRIRLANDI</b>\n`
         reportText += `───────────────────\n`
         reportText += `👤 <b>Yuborgan:</b> ${formatSender(oldMsg.from)}\n`
         reportText += `💬 <b>Chat:</b> ${formatChat(m.chat)}\n`
         reportText += `───────────────────\n\n`
-        
+
         if (isTextDiff) {
           reportText += `❌ <b>ESKI MATN:</b>\n`
           reportText += `<blockquote>${oldMsg.text || '[Bo\'sh]'}</blockquote>\n`
           reportText += `✅ <b>YANGI MATN:</b>\n`
           reportText += `<blockquote>${newText || '[Bo\'sh]'}</blockquote>\n\n`
         }
-        
+
         if (isCaptionDiff) {
           reportText += `❌ <b>ESKI IZOH (Caption):</b>\n`
           reportText += `<blockquote>${oldMsg.caption || '[Bo\'sh]'}</blockquote>\n`
@@ -529,18 +533,18 @@ async function handleDeletedBusinessMessages(event) {
       if (oldMsg) {
         const contentText = oldMsg.text || oldMsg.caption || ''
         const formattedTime = new Date().toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-        
+
         let reportText = `🗑 <b>AUDIT: XABAR O'CHIRILDI</b>\n`
         reportText += `───────────────────\n`
         reportText += `👤 <b>Yuborgan:</b> ${formatSender(oldMsg.from)}\n`
         reportText += `💬 <b>Chat:</b> ${formatChat(event.chat)}\n`
         reportText += `───────────────────\n\n`
-        
+
         if (contentText) {
           reportText += `📝 <b>O'CHIRILGAN MAZMUN:</b>\n`
           reportText += `<blockquote>${contentText}</blockquote>\n`
         }
-        
+
         if (oldMsg.media?.type) {
           reportText += `📁 <b>Media turi:</b> <code>${oldMsg.media.type}</code>\n`
         }
