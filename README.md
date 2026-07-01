@@ -1,112 +1,115 @@
-# Express Audit Bot (Secretary Mode / Chat Automation)
+# Telegram Business Audit Bot
 
-Webhook asosidagi bot: Telegram Secretary Mode orqali profilingizga ulanib,
-suhbatlardagi xabarlarni (matn, voice, audio) kuzatadi va xabar **tahrirlansa**
-yoki **o'chirilsa**, adminlarga darhol bildirishnoma yuboradi.
+Telegram Secretary Mode (Chat Bots) orqali shaxsiy akkauntga bog'lanib, chatlardagi yozishmalarni nazorat qiluvchi va xavfsizligini ta'minlovchi Webhook-bot. 
 
-## Tarkib
+Suhbatdoshlar xabarlarni **tahrirlasa (edit)** yoki **o'chirib tashlasa (delete)**, bot darhol sizning shaxsiy chatingizga ularning asl nusxasini bildirishnoma ko'rinishida yuboradi.
 
-```
-express_audit_bot/
-├── index.js          # asosiy server va barcha handlerlar
+---
+
+## 🚀 Asosiy Imkoniyatlar
+
+1. **Tahrirlangan xabarlar audit-nazorati**:
+   - Xabar tahrirlanganda, eski va yangi matn/caption holatlarini solishtirib chiroyli blokda yuboradi.
+2. **O'chirilgan xabarlarni tiklash**:
+   - Suhbatdosh xabarni o'chirsa, uning asl matni va media fayllarini sizga yetkazadi.
+3. **⏱ Bir martalik / Taymerli xabarlarni yuklab olish (Bypass)**:
+   - Telegram bir martalik ko'riladigan rasm, video, audio yoki video-kruglyak xabarlarini webhook orqali botga uzatmaydi.
+   - **Yechim:** Agar o'sha bir martalik xabarga **reply (javob)** qilib yozsangiz, bot orqa fonda uning `file_id`sini oladi, Telegram serverlaridan binary (buffer) ko'rinishida yuklab oladi va sizga to'g'ri formatda (rasm bo'lsa rasm, video bo'lsa video qilib) qayta yuklab yuboradi!
+
+---
+
+## 📁 Loyiha Strukturasi
+
+```text
+audit_bot/
+├── index.js             # Asosiy kirish nuqtasi va barcha webhook handlerlar
 ├── models/
-│   ├── voice.js       # xabarlarni saqlash sxemasi
-│   └── admin.js       # admin ID'lar sxemasi
-├── package.json
-└── .env.example
+│   ├── msgs.js          # Xabarlar tarixi uchun Mongoose modeli (ownerId, chatId, messageId compound index)
+│   └── users.js         # Bot foydalanuvchilari va faol ulanishlar statusi
+├── vercel.json          # Vercel serverless platformasi uchun marshrutlash sozlamalari
+├── package.json         # Loyiha modullari va scriptlari
+└── README.md            # Ushbu yo'riqnoma
 ```
 
-## 1. O'rnatish
+---
 
+## 🛠 O'rnatish va Sozlash
+
+### 1. Lokal o'rnatish
+
+Loyihani klonlang va bog'liqliklarni o'rnating:
 ```bash
 npm install
 ```
 
-## 2. Sozlash
+### 2. Muhit o'zgaruvchilari (`.env`)
 
-`.env.example` ni `.env` deb nomlang va to'ldiring:
-
+`.env.example` faylini `.env` ko'rinishida nusxalang va to'ldiring:
 ```bash
 cp .env.example .env
 ```
 
-| O'zgaruvchi | Tavsif |
+| Kalit | Tavsif |
 |---|---|
-| `BOT_TOKEN` | @BotFather'dan olingan token |
-| `WEBHOOK_SECRET` | Istalgan uzun tasodifiy satr (webhookni himoyalash uchun) |
-| `PORT` | Server porti (hosting o'zi belgilasa shuni qoldiring) |
-| `MONGO_URI` | MongoDB ulanish manzili |
-| `ADMIN_ID` | Sizning Telegram user ID'ingiz |
+| `BOT_TOKEN` | @BotFather orqali olingan Telegram bot tokeni |
+| `WEBHOOK_SECRET` | Webhook so'rovlarini himoyalash uchun ixtiyoriy maxfiy satr |
+| `PORT` | Mahalliy port (standart: 3000) |
+| `MONGO_URI` | MongoDB ma'lumotlar bazasi ulanish manzili |
+| `ADMIN_ID` | Bot adminining shaxsiy Telegram ID raqami |
 
-**Diqqat:** `.env` faylini hech qachon ochiq joyga (GitHub'ga) yuklamang.
+---
 
-## 3. Serverni ishga tushirish
+## 💻 Serverni ishga tushirish
 
+### Lokal testlash (Nodemon orqali):
 ```bash
-npm start
+npm run dev
 ```
 
-Bu serverni internetga ochiq joyda (Render, Railway, VPS va h.k.) ishlatishingiz kerak,
-chunki Telegram webhook orqali sizning serveringizga `POST` so'rov yuboradi —
-shuning uchun server ochiq, HTTPS manzilga ega bo'lishi shart.
+---
 
-## 4. Webhookni o'rnatish
+## 🚀 Vercel Platformasiga Joylash (Deploy)
 
-Brauzerda serveringiz manzilini oching:
+Ushbu bot Vercel Serverless muhitiga to'liq moslashtirilgan. Joylash uchun quyidagi ketma-ketlikni bajaring:
 
-```
-https://SIZNING-DOMAIN/?set=setwebhook
-```
+1. **Vercel CLI ni o'rnating** (agar o'rnatilmagan bo'lsa):
+   ```bash
+   npm i -g vercel
+   ```
+2. **Loyihani deploy qiling**:
+   ```bash
+   vercel
+   ```
+3. Vercel loyihasi sozlamalarida (Dashboard ➜ Settings ➜ Environment Variables) quyidagi o'zgaruvchilarni kiriting:
+   - `BOT_TOKEN`
+   - `WEBHOOK_SECRET`
+   - `MONGO_URI`
+   - `ADMIN_ID`
+4. O'zgarishlarni kuchga kiritish va production nashrini chiqarish:
+   ```bash
+   vercel --prod
+   ```
+5. **Webhookni o'rnatish**:
+   Brauzeringizda quyidagi manzilni oching (siz belgilagan `WEBHOOK_SECRET` qiymatini `secret` o'zgaruvchisiga bering):
+   `https://SIZNING-VERCEL-DOMAIN.vercel.app/?set=setwebhook&secret=YOUR_WEBHOOK_SECRET`
+   Va ochilgan sahifadagi **Set** tugmasini bosing. Bu Telegram tizimiga to'g'ri webhook yangilanishlar ro'yxatini bog'laydi. Xavfsizlik maqsadida, agar `secret` noto'g'ri bo'lsa, xizmat bot tokenini oshkor qilmaydi va so'rovni rad etadi (403 Forbidden).
 
-Chiqqan "Set" havolasini bosing — bu Telegram'ga webhook manzilini va kerakli
-`allowed_updates` (jumladan `business_message`, `edited_business_message`,
-`deleted_business_messages`) ro'yxatini yuboradi.
+---
 
-"Info" havolasi orqali webhook holatini tekshirib ko'rishingiz mumkin.
+## ⚙️ Botni Akkauntga Bog'lash
 
-## 5. Botni profilga ulash
+1. **Secretary Mode ni yoqish**:
+   - Telegram'da `@BotFather` botiga kiring.
+   - `/mybots` buyrug'ini yuboring ➜ Botingizni tanlang ➜ **Bot Settings** ➜ **Secretary Mode** ➜ **Turn on** tugmasini bosing.
+2. **Akkauntga ulash**:
+   - Telegram ilovangizda: **Sozlamalar (Settings) ➜ Telegram Business ➜ Chat-botlar (Chat Bots)** bo'limiga kiring.
+   - Bot username'ini qidirib topib, ulanishni tasdiqlang.
+   - Botga xabarlarni o'qish (Manage Messages) ruxsatini bering.
 
-@BotFather'da:
-- `/mybots` → botingiz → **Bot Settings → Secretary Mode → Turn on**
+---
 
-Telegram ilovasida:
-- **Sozlamalar → Chat Automation** → bot username'ini kiritib ulang
-- Kerakli ruxsatlarni (Manage Messages) yoqing
-- Qaysi chatlarga bot kira olishini tanlang
+## 🤖 Bot Buyruqlari
 
-## Qanday ishlaydi
-
-1. **`business_message`** keladi → xabar (matn/voice/audio) MongoDB'ga saqlanadi.
-2. **`edited_business_message`** keladi → bazadagi eski matn bilan solishtiriladi,
-   farqi barcha adminlarga yuboriladi, baza yangilanadi.
-3. **`deleted_business_messages`** keladi → bazadan eski xabar topiladi, kim yozgani
-   va matni adminlarga yuboriladi, yozuv "o'chirilgan" deb belgilanadi (`deletedAt`).
-
-## Admin tizimi
-
-- `.env` dagi `ADMIN_ID` — asosiy (super) admin, har doim bildirishnoma oladi.
-- Qo'shimcha adminlar `Admin` kolleksiyasiga yozilsa, ular ham bildirishnoma oladi
-  (buni qo'shish uchun `/admin` komandasi logikasini to'liqlashtirish kerak —
-  hozircha bazaviy struktura tayyor).
-
-## Voice/Audio fayllarni yuklab olish — muhim nuance
-
-Secretary Mode orqali kelgan `business_message`dagi `file_id` oddiy bot xabaridan farq qiladi:
-fayl botning o'z fayllar omborida emas, balki **business ulanish orqali ko'rinadigan
-foydalanuvchi sessiyasida** turadi. Shu sababli `getFile` so'rovida **albatta**
-`business_connection_id` parametrini ham yuborish kerak — aks holda Telegram
-faylni topa olmaydi.
-
-Kodda bu `getBusinessFile(fileId, businessConnectionId)` funksiyasi orqali
-amalga oshirilgan, va har bir voice/audio xabar kelganda avtomatik chaqiriladi.
-
-**Diqqat:** `getFile` qaytargan yuklab olish manzili (`file_path`) faqat
-taxminan **1 soat** amal qiladi. Agar faylni uzoq muddatga saqlash kerak bo'lsa,
-shu manzildan darhol faylni o'z serveringizga (yoki bulutga) yuklab olishingiz
-kerak — `fileUrl`ni faqat saqlab qo'yish kifoya emas, chunki muddati o'tib qoladi.
-
-
-- `voice`/`audio` xabarlarning o'zi (fayl tarkibi) saqlanmaydi — faqat ularning
-  Telegram `file_id`si va davomiyligi saqlanadi. Faylning o'zini yuklab olish
-  uchun alohida `getFile` so'rovi kerak bo'ladi.
-- Bu vosita faqat **o'zingizning** profilingiz uchun ishlatilishi mo'ljallangan.
+* `/start` - Botni ishga tushiradi, taymerli xabarlarni qanday saqlab qolish haqida batafsil ma'lumot beradi.
+* `/yordam` - Akkauntni botga bog'lash va audit faoliyati bo'yicha to'liq yo'riqnomani taqdim etadi.
+* **Boshqa oddiy xabarlar** - Botga shaxsiy chatingizdan yozilgan boshqa ixtiyoriy xabarlarga bot chiroyli javob qaytarib, o'z vazifasini eslatib qo'yadi.

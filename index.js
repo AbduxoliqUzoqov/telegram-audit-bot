@@ -271,8 +271,7 @@ async function setupCmds() {
   await api('setMyCommands', {
     commands: [
       { command: 'start', description: 'Botni ishga tushirish' },
-      { command: 'yordam', description: 'Yordam' },
-      { command: 'id', description: 'Telegram ID' },
+      { command: 'yordam', description: 'Yordam ko\'rsatish va yo\'riqnoma' }
     ]
   })
   await api('setChatMenuButton', {}).catch(() => { })
@@ -281,6 +280,9 @@ async function setupCmds() {
 // ===== EXPRESS =====
 app.get('/', (req, res) => {
   if (req.query?.set === 'setwebhook') {
+    if (SECRET && req.query.secret !== SECRET) {
+      return res.status(403).send('Forbidden: Invalid secret token')
+    }
     const allowed = encodeURIComponent(JSON.stringify([
       'message', 'edited_message',
       'business_connection', 'business_message',
@@ -336,12 +338,12 @@ async function handleMessage(m) {
   if (m.text === '/start') {
     const welcomeText =
       `👋 <b>Assalomu alaykum, ${user.firstName}!</b>\n\n` +
-      `🤖 Ushbu bot sizga o'tish yozishmalaringizni (Telegram Business Connection orqali) nazorat qilish va xavfsizligini ta'minlashda yordam beradi.\n\n` +
-      `<b>Asosiy imkoniyatlar:</b>\n` +
-      `• 📝 Xabarlar tarixini vaqtinchalik saqlash (48 soatgacha)\n` +
-      `• ✏️ Xabar tahrirlansa (edit) eski va yangi matnni solishtirib yuborish\n` +
-      `• 🗑 Xabar o'chirilsa (delete) uning asl matni va media fayllarini qaytarib jo'natish\n\n` +
-      `⚙️ <i>Ulanish uchun: Telegram Sozlamalari ➜ Telegram Business ➜ Chat Bots bo'limidan ushbu botni tanlang.</i>`
+      `🤖 Ushbu bot sizga shaxsiy yozishmalaringizni (Telegram Business Connection orqali) nazorat qilish va xavfsizligini ta'minlashda yordam beradi.\n\n` +
+      `🚀 <b>Asosiy imkoniyatlar:</b>\n` +
+      `• ✏️ <b>Tahrirlangan xabarlar:</b> Xabar o'zgartirilsa, eski va yangi holatini solishtirib beradi.\n` +
+      `• 🗑 <b>O'chirilgan xabarlar:</b> Xabar o'chirib tashlansa, uning asl nusxasini tiklab yuboradi.\n` +
+      `• ⏱ <b>Bir martalik / Taymerli xabarlar:</b> Agar suhbatdoshingiz sizga bir martalik ko'rishga mo'ljallangan rasm, video, audio yoki video-kruglyak yuborsa, bot uni to'g'ridan-to'g'ri ko'ra olmaydi. Buni saqlab qolish uchun <b>o'sha xabarga reply (javob) qilib yozib qo'ysangiz kifoya</b>, bot uni yuklab olib sizga tashlab beradi!\n\n` +
+      `⚙️ <i>Ulanish uchun: Telegram Sozlamalari ➜ Telegram Business ➜ Chat Bots bo'limidan ushbu botni tanlang. Batafsil ma'lumot uchun /yordam buyrug'ini bosing.</i>`
 
     await api('sendMessage', {
       chat_id: m.chat.id,
@@ -353,6 +355,40 @@ async function handleMessage(m) {
         ]
       }
     })
+  } else if (m.text === '/yordam') {
+    const helpText =
+      `📖 <b>Botdan foydalanish yo'riqnomasi:</b>\n\n` +
+      `1️⃣ <b>Ulanish:</b>\n` +
+      `Botni shaxsiy yozishmalaringizga ulash uchun:\n` +
+      `• Telegram Sozlamalari (Settings) ➜ Telegram Business ➜ Chat Bots (Chat-botlar) bo'limiga kiring.\n` +
+      `• Ushbu botni (<code>@${botUsername || 'shaxsiyauditbot'}</code>) tanlang va saqlang.\n\n` +
+      `2️⃣ <b>Audit (Nazorat):</b>\n` +
+      `• Bot ulanganidan so'ng, shaxsiy suhbatlaringizdagi xabarlar tahrirlansa yoki o'chirilsa, bot sizning ushbu shaxsiy chatingizga audit xabarlarini yuboradi.\n\n` +
+      `3️⃣ <b>⏱ Bir martalik (o'chib ketadigan) media fayllar:</b>\n` +
+      `• Telegram bunday xabarlarni to'g'ridan-to'g'ri botga uzatmaydi.\n` +
+      `• Ularni saqlab qolish uchun, suhbatdosh yuborgan bir martalik rasm, video, audio yoki video note (kruglyak) xabariga <b>reply (javob)</b> qilib biror nima yozib qo'ying.\n` +
+      `• Javob yozganingizda, bot orqa fonda o'sha mediani xavfsiz tarzda yuklab oladi va sizga alohida jo'natadi!`;
+
+    await api('sendMessage', {
+      chat_id: m.chat.id,
+      text: helpText,
+      parse_mode: 'HTML'
+    })
+  } else {
+    if (m.text && !m.text.startsWith('/')) {
+      const generalText =
+        `ℹ️ <b>Assalomu alaykum!</b>\n\n` +
+        `Men Telegram Business audit botiman. Shaxsiy chatingizda yozilgan oddiy xabarlarni qayta ishlamayman.\n\n` +
+        `💡 <b>Men qanday vazifani bajaraman?</b>\n` +
+        `• Shaxsiy akkauntingizga bog'langan holda, suhbatlaringizdagi o'chirilgan yoki tahrirlangan xabarlarni sizga yetkazib beriman.\n\n` +
+        `⚙️ Botni faollashtirish va sozlash uchun /yordam buyrug'ini yuboring.`;
+
+      await api('sendMessage', {
+        chat_id: m.chat.id,
+        text: generalText,
+        parse_mode: 'HTML'
+      })
+    }
   }
 
 }
@@ -740,3 +776,5 @@ app.listen(PORT, async () => {
   await loadBotInfo(); await setupCmds(); await loadConnectionCache()
   console.log(`✅ Server port ${PORT}`)
 })
+
+export default app
