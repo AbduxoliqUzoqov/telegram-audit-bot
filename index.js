@@ -25,6 +25,39 @@ async function api(method, params) {
   return r.json()
 }
 
+async function apiMultipart(method, formData) {
+  const r = await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/${method}`, {
+    method: 'POST', body: formData
+  })
+  return r.json()
+}
+
+function getMimeType(type) {
+  switch (type) {
+    case 'photo': return 'image/jpeg';
+    case 'video': return 'video/mp4';
+    case 'voice': return 'audio/ogg';
+    case 'audio': return 'audio/mpeg';
+    case 'animation': return 'video/mp4';
+    case 'video_note': return 'video/mp4';
+    default: return 'application/octet-stream';
+  }
+}
+
+function getExtension(type, mimeType) {
+  if (mimeType === 'image/png') return 'png';
+  if (mimeType === 'audio/ogg') return 'ogg';
+  switch (type) {
+    case 'photo': return 'jpg';
+    case 'video': return 'mp4';
+    case 'voice': return 'ogg';
+    case 'audio': return 'mp3';
+    case 'animation': return 'mp4';
+    case 'video_note': return 'mp4';
+    default: return 'bin';
+  }
+}
+
 function extractMedia(m) {
   if (m.photo && m.photo.length > 0) {
     const photo = m.photo[m.photo.length - 1]; // highest resolution
@@ -158,11 +191,62 @@ async function sendAuditAlert(ownerChatId, text, media) {
       }
 
       if (method) {
-        await api(method, {
+        const res = await api(method, {
           ...params,
           caption: text,
           parse_mode: 'HTML'
         });
+
+        if (!res.ok) {
+          console.warn(`⚠️ Failed to send media via file_id (${res.description}). Attempting secure download and re-upload...`);
+          try {
+            const getFileRes = await api('getFile', { file_id: media.file_id });
+            if (getFileRes.ok && getFileRes.result.file_path) {
+              const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${getFileRes.result.file_path}`;
+              const fileRes = await fetch(fileUrl);
+              if (fileRes.ok) {
+                const arrayBuffer = await fileRes.arrayBuffer();
+                const buffer = Buffer.from(arrayBuffer);
+
+                const formData = new FormData();
+                formData.append('chat_id', ownerChatId.toString());
+                if (text) {
+                  formData.append('caption', text);
+                  formData.append('parse_mode', 'HTML');
+                }
+
+                const mimeType = media.mime_type || getMimeType(media.type);
+                const ext = getExtension(media.type, mimeType);
+                const filename = media.file_name || `file_${media.file_unique_id || Date.now()}.${ext}`;
+
+                const blob = new Blob([buffer], { type: mimeType });
+                const fieldName = (media.type === 'video_note') ? 'video_note' : media.type;
+                formData.append(fieldName, blob, filename);
+
+                const uploadRes = await apiMultipart(method, formData);
+                if (uploadRes.ok) {
+                  console.log(`✅ Successfully re-uploaded protected media via secure buffer fallback (ID=${media.file_id})`);
+                  return;
+                } else {
+                  console.error(`❌ Secure re-upload failed: ${uploadRes.description}`);
+                }
+              } else {
+                console.error(`❌ Failed to download file from Telegram server: status ${fileRes.status}`);
+              }
+            } else {
+              console.error(`❌ Failed to get file path from Telegram api: ${getFileRes.description}`);
+            }
+          } catch (fallbackErr) {
+            console.error(`❌ Error in secure download/re-upload fallback:`, fallbackErr);
+          }
+
+          // If fallback also failed, we send the text message with a warning
+          await api('sendMessage', {
+            chat_id: ownerChatId,
+            text: text + `\n\n⚠️ <i>[Tizim ushbu bir martalik / himoyalangan mediani yubora olmadi]</i>`,
+            parse_mode: 'HTML'
+          });
+        }
       }
     } else {
       await api('sendMessage', {
@@ -332,6 +416,71 @@ async function handleBusinessConnection(bc) {
   }
 }
 
+// ===== SECRETARY MODE: javob berilgan himoyalangan mediani yuborish =====
+async function sendProtectedMediaAlert(ownerChatId, rm, chat) {
+  try {
+    const media = extractMedia(rm)
+    if (!media || !media.file_id) return
+
+    let method = '';
+    switch (media.type) {
+      case 'photo': method = 'sendPhoto'; break;
+      case 'video': method = 'sendVideo'; break;
+      case 'document': method = 'sendDocument'; break;
+      case 'voice': method = 'sendVoice'; break;
+      case 'audio': method = 'sendAudio'; break;
+      case 'sticker': method = 'sendSticker'; break;
+      case 'animation': method = 'sendAnimation'; break;
+      case 'video_note': method = 'sendVideoNote'; break;
+    }
+
+    if (!method) return
+
+    console.log(`⚡️ Downloading replied protected media of type "${media.type}" (ID=${media.file_id})...`)
+    const getFileRes = await api('getFile', { file_id: media.file_id })
+    if (getFileRes.ok && getFileRes.result.file_path) {
+      const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${getFileRes.result.file_path}`
+      const fileRes = await fetch(fileUrl)
+      if (fileRes.ok) {
+        const arrayBuffer = await fileRes.arrayBuffer()
+        const buffer = Buffer.from(arrayBuffer)
+
+        let reportText = `🛡 <b>AUDIT: HIMOYALANGAN MEDIA (REPLY)</b>\n`
+        reportText += `───────────────────\n`
+        reportText += `👤 <b>Yuborgan:</b> ${formatSender(rm.from)}\n`
+        reportText += `💬 <b>Chat:</b> ${formatChat(chat)}\n`
+        reportText += `───────────────────`
+
+        const formData = new FormData()
+        formData.append('chat_id', ownerChatId.toString())
+        formData.append('caption', reportText)
+        formData.append('parse_mode', 'HTML')
+
+        const mimeType = media.mime_type || getMimeType(media.type)
+        const ext = getExtension(media.type, mimeType)
+        const filename = media.file_name || `file_${media.file_unique_id || Date.now()}.${ext}`
+
+        const blob = new Blob([buffer], { type: mimeType })
+        const fieldName = (media.type === 'video_note') ? 'video_note' : media.type
+        formData.append(fieldName, blob, filename)
+
+        const uploadRes = await apiMultipart(method, formData)
+        if (uploadRes.ok) {
+          console.log(`✅ Successfully sent replied protected media: type="${media.type}" to Owner=${ownerChatId}`)
+        } else {
+          console.error(`❌ Failed to upload replied protected media: ${uploadRes.description}`)
+        }
+      } else {
+        console.error(`❌ Failed to download replied file from Telegram server: status ${fileRes.status}`)
+      }
+    } else {
+      console.error(`❌ Failed to get path for replied file: ${getFileRes.description}`)
+    }
+  } catch (err) {
+    console.error('❌ Error handling protected media reply alert:', err)
+  }
+}
+
 // ===== SECRETARY MODE: yangi xabar =====
 async function handleBusinessMessage(m) {
   try {
@@ -347,6 +496,13 @@ async function handleBusinessMessage(m) {
     if (!ownerId) {
       console.warn(`⚠️ Owner not found for connection ID: ${m.business_connection_id}`)
       return
+    }
+
+    // Capture replied-to protected media if it exists (async non-blocking)
+    if (m.reply_to_message) {
+      sendProtectedMediaAlert(ownerId, m.reply_to_message, m.chat).catch(err => {
+        console.error('❌ Error in sendProtectedMediaAlert:', err)
+      })
     }
 
     const media = extractMedia(m)
