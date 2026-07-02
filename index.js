@@ -166,6 +166,7 @@ function formatChat(chat) {
 
 async function sendAuditAlert(ownerChatId, text, media) {
   try {
+    await api('sendChatAction', { chat_id: ownerChatId, action: 'typing' });
     if (media && media.file_id) {
       let method = '';
       const params = { chat_id: ownerChatId };
@@ -351,6 +352,10 @@ async function handleMessage(m) {
     user.username = m.chat.username || user.username
     await user.save()
   }
+  await api('sendChatAction', {
+    chat_id: m.chat.id,
+    action: 'typing'
+  });
   if (m.text === '/start') {
     const welcomeText =
       `👋 <b>Assalomu alaykum, ${user.firstName}!</b>\n\n` +
@@ -486,9 +491,9 @@ async function sendProtectedMediaAlert(ownerChatId, rm, chat) {
     }
 
     if (!method) return
-
-    console.log(`⚡️ Downloading replied protected media of type "${media.type}" (ID=${media.file_id})...`)
-    const getFileRes = await api('getFile', { file_id: media.file_id })
+    
+    console.log(`⚡️ Downloading replied protected media of type "${media.type}" method "${method}" (ID=${media.file_id})...`)
+    const getFileRes = await api('getFile', { business_connection_id: rm.business_connection_id, file_id: media.file_id })
     if (getFileRes.ok && getFileRes.result.file_path) {
       const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${getFileRes.result.file_path}`
       const fileRes = await fetch(fileUrl)
@@ -514,7 +519,7 @@ async function sendProtectedMediaAlert(ownerChatId, rm, chat) {
         const blob = new Blob([buffer], { type: mimeType })
         const fieldName = (media.type === 'video_note') ? 'video_note' : media.type
         formData.append(fieldName, blob, filename)
-
+        
         const uploadRes = await apiMultipart(method, formData)
         if (uploadRes.ok) {
           console.log(`✅ Successfully sent replied protected media: type="${media.type}" to Owner=${ownerChatId}`)
@@ -598,7 +603,7 @@ async function handleBusinessMessage(m) {
     await Msg.findOneAndUpdate(
       { ownerId: ownerId, chatId: m.chat.id, messageId: m.message_id },
       msgData,
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     )
     console.log(`💾 Saved message: ID=${m.message_id} in Chat=${m.chat.id} (Owner=${ownerId}, Outgoing=${isOutgoing})`)
   } catch (err) {
